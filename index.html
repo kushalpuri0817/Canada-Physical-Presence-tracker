@@ -98,9 +98,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebas
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js";
 import { getFirestore, collection, onSnapshot, addDoc, doc, deleteDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
 
-const personSelect = document.getElementById('personSelect');
-
-    
+// Fill these with your actual Firebase config values!
 const firebaseConfig = {
   apiKey: "...",
   authDomain: "...",
@@ -118,34 +116,118 @@ const auth = getAuth(app);
 let userId = null;
 let unsubscribe = null;
 
+const personSelect = document.getElementById('personSelect');
+const addTripBtn = document.getElementById('addTripBtn');
+const tripList = document.getElementById('tripList');
+const totalDaysElem = document.getElementById('totalDays');
+const currentPersonElem = document.getElementById('currentPerson');
+const noTripsMessage = document.getElementById('noTripsMessage');
+
+function showNoTrips(show) {
+    noTripsMessage.style.display = show ? 'block' : 'none';
+}
+
+function renderTrips(trips) {
+    tripList.innerHTML = '';
+    let totalDays = 0;
+    if (trips.length === 0) {
+        showNoTrips(true);
+    } else {
+        showNoTrips(false);
+        trips.forEach(trip => {
+            totalDays += trip.days;
+            const div = document.createElement('div');
+            div.className = "p-4 bg-gray-100 rounded-md flex justify-between items-center";
+            div.innerHTML = `
+                <div>
+                    <span class="font-bold">${trip.entryDate}</span> to 
+                    <span class="font-bold">${trip.exitDate}</span>
+                    <span class="ml-2 text-gray-500">(${trip.days} days)</span>
+                </div>
+                <button data-id="${trip.id}" class="delete-trip bg-red-500 text-white px-2 py-1 rounded hover:bg-red-700">Delete</button>
+            `;
+            tripList.appendChild(div);
+        });
+    }
+    totalDaysElem.textContent = totalDays;
+    addDeleteListeners();
+}
+
+function addDeleteListeners() {
+    const buttons = tripList.querySelectorAll('.delete-trip');
+    buttons.forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const tripId = btn.getAttribute('data-id');
+            if (userId && tripId) {
+                await deleteDoc(doc(db, `users/${userId}/trips`, tripId));
+            }
+        });
+    });
+}
+
 function fetchTripsForPerson(person) {
-  if (unsubscribe) unsubscribe();
-  const tripsCollection = collection(db, `users/${userId}/trips`);
-  const q = query(tripsCollection, where("person", "==", person));
-  unsubscribe = onSnapshot(q, (querySnapshot) => {
-    // ... renderTrips logic ...
-  });
+    currentPersonElem.textContent = person;
+    if (unsubscribe) unsubscribe();
+    const tripsCollection = collection(db, `users/${userId}/trips`);
+    const q = query(tripsCollection, where("person", "==", person));
+    unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const trips = [];
+        querySnapshot.forEach(docSnap => {
+            trips.push({
+                ...docSnap.data(),
+                id: docSnap.id
+            });
+        });
+        renderTrips(trips);
+    });
 }
 
 onAuthStateChanged(auth, async (user) => {
-  if (user) {
-    userId = user.uid;
-    // Update the User ID display
-    document.getElementById('currentUserId').textContent = userId;
-    fetchTripsForPerson(personSelect.value);
-  } else {
-    await signInAnonymously(auth);
-  }
+    if (user) {
+        userId = user.uid;
+        document.getElementById('currentUserId').textContent = userId;
+        fetchTripsForPerson(personSelect.value);
+    } else {
+        await signInAnonymously(auth);
+    }
 });
 
 personSelect.addEventListener('change', () => {
-  fetchTripsForPerson(personSelect.value);
+    fetchTripsForPerson(personSelect.value);
 });
 
-// When adding trip:
-await addDoc(collection(db, `users/${userId}/trips`), {
-  entryDate, exitDate, days: diffDays, person: selectedPerson, createdAt: serverTimestamp()
+addTripBtn.addEventListener('click', async () => {
+    const entryDate = document.getElementById('entryDate').value;
+    const exitDate = document.getElementById('exitDate').value;
+    const selectedPerson = personSelect.value;
+
+    if (!entryDate || !exitDate) {
+        showModal('Invalid Dates', 'Please select both entry and exit dates.');
+        return;
+    }
+    const diffDays = Math.floor((new Date(exitDate) - new Date(entryDate)) / (1000 * 60 * 60 * 24)) + 1;
+    if (diffDays < 1) {
+        showModal('Invalid Trip', 'Exit date must be after or equal to entry date.');
+        return;
+    }
+    await addDoc(collection(db, `users/${userId}/trips`), {
+        entryDate, exitDate, days: diffDays, person: selectedPerson, createdAt: serverTimestamp()
+    });
+    // Optionally clear fields
+    document.getElementById('entryDate').value = '';
+    document.getElementById('exitDate').value = '';
 });
+
+// Modal helpers
+function showModal(title, message) {
+    document.getElementById('modal-title').textContent = title;
+    document.getElementById('modal-message').textContent = message;
+    document.getElementById('modal').style.display = 'block';
+}
+document.getElementById('modal-close-btn').addEventListener('click', () => {
+    document.getElementById('modal').style.display = 'none';
+});
+
 </script>
 </body>
 </html>
