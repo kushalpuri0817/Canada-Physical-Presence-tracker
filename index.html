@@ -296,21 +296,11 @@
                 // If not logged in, try to sign in
                 console.log("No user found. Attempting to sign in...");
                 if (initialAuthToken) {
-                    try {
-                        await signInWithCustomToken(auth, initialAuthToken);
-                        console.log("Signed in with custom token.");
-                    } catch (error) {
-                        console.error('Custom token sign-in failed: ', error);
-                        showModal('Authentication Error', 'Failed to sign in with custom token.');
-                    }
+                    await signInWithCustomToken(auth, initialAuthToken);
+                    console.log("Signed in with custom token.");
                 } else {
-                    try {
-                        await signInAnonymously(auth);
-                        console.log("Signed in anonymously.");
-                    } catch (error) {
-                        console.error('Anonymous sign-in failed: ', error);
-                        showModal('Authentication Error', 'Failed to sign in anonymously.');
-                    }
+                    await signInAnonymously(auth);
+                    console.log("Signed in anonymously.");
                 }
             }
         });
