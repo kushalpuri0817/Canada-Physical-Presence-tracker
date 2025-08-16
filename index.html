@@ -102,16 +102,7 @@
 
         // Global variables provided by the Canvas environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-        console.log("Firebase App ID:", appId);
-        console.log("Firebase Config:", firebaseConfig);
-
-        // Initialize Firebase
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        const auth = getAuth(app);
 
         // UI elements
         const entryDateInput = document.getElementById('entryDate');
@@ -140,11 +131,113 @@
             modal.classList.remove('hidden');
         }
 
-        // Close modal event listener
-        modalCloseBtn.addEventListener('click', () => {
-            modal.classList.add('hidden');
-        });
+        // --- Firebase Initialization and Authentication ---
 
+        let firebaseConfig = {};
+        try {
+            firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        } catch (e) {
+            console.error("Failed to parse Firebase config:", e);
+            showModal('Configuration Error', 'The Firebase configuration is invalid. Please contact support.');
+        }
+
+        // Check if a project ID is available before initializing Firebase
+        if (!firebaseConfig.projectId) {
+            console.error("Firebase 'projectId' not found in configuration.");
+            showModal('Configuration Error', 'Firebase Project ID is missing. The app will not be able to save data.');
+        } else {
+            console.log("Firebase App ID:", appId);
+            console.log("Firebase Config:", firebaseConfig);
+
+            // Initialize Firebase
+            const app = initializeApp(firebaseConfig);
+            const db = getFirestore(app);
+            const auth = getAuth(app);
+
+            // Set up authentication and Firestore listener
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                    currentUserIdSpan.textContent = userId;
+                    console.log("Authentication successful. User ID:", userId);
+                    setupFirestoreListener(userId, personSelect.value, db);
+                } else {
+                    console.log("No user found. Attempting to sign in...");
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                        console.log("Signed in with custom token.");
+                    } else {
+                        await signInAnonymously(auth);
+                        console.log("Signed in anonymously.");
+                    }
+                }
+            });
+
+            // Event listener for the "Add Trip" button
+            addTripBtn.addEventListener('click', async () => {
+                if (!userId) {
+                    showModal('Not Authenticated', 'Please wait for authentication to complete.');
+                    return;
+                }
+
+                const entryDate = entryDateInput.value;
+                const exitDate = exitDateInput.value;
+                const selectedPerson = personSelect.value;
+
+                if (!entryDate || !exitDate) {
+                    showModal('Missing Dates', 'Please enter both an entry and an exit date.');
+                    return;
+                }
+
+                // Convert to Date objects for comparison
+                const entry = new Date(entryDate);
+                const exit = new Date(exitDate);
+
+                if (entry > exit) {
+                    showModal('Invalid Dates', 'The entry date cannot be after the exit date.');
+                    return;
+                }
+
+                // Calculate the number of days, inclusive of both dates
+                const diffTime = Math.abs(exit - entry);
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
+                const newTrip = {
+                    entryDate: entryDate,
+                    exitDate: exitDate,
+                    days: diffDays,
+                    person: selectedPerson,
+                    createdAt: new Date()
+                };
+
+                // Add the new trip to Firestore
+                try {
+                    await addDoc(collection(db, `artifacts/${appId}/users/${userId}/trips`), newTrip);
+                } catch (error) {
+                    showModal('Error', 'Failed to add trip. Please try again.');
+                    console.error('Error adding document: ', error);
+                }
+
+                // Clear input fields
+                entryDateInput.value = '';
+                exitDateInput.value = '';
+            });
+
+            // Event listener for person selection change
+            personSelect.addEventListener('change', () => {
+                const selectedPerson = personSelect.value;
+                currentPersonSpan.textContent = selectedPerson;
+
+                // Re-subscribe to the Firestore listener with the new person filter
+                if (unsubscribe) {
+                    unsubscribe(); // Unsubscribe from the old listener
+                }
+                if (userId) {
+                    setupFirestoreListener(userId, selectedPerson, db);
+                }
+            });
+        }
+        
         // Function to render trips from a given array
         function renderTrips(trips) {
             tripList.innerHTML = '';
@@ -194,75 +287,11 @@
             const totalDays = trips.reduce((sum, trip) => sum + trip.days, 0);
             totalDaysSpan.textContent = totalDays;
         }
-
-        // Event listener for the "Add Trip" button
-        addTripBtn.addEventListener('click', async () => {
-            if (!userId) {
-                showModal('Not Authenticated', 'Please wait for authentication to complete.');
-                return;
-            }
-
-            const entryDate = entryDateInput.value;
-            const exitDate = exitDateInput.value;
-            const selectedPerson = personSelect.value;
-
-            if (!entryDate || !exitDate) {
-                showModal('Missing Dates', 'Please enter both an entry and an exit date.');
-                return;
-            }
-
-            // Convert to Date objects for comparison
-            const entry = new Date(entryDate);
-            const exit = new Date(exitDate);
-
-            if (entry > exit) {
-                showModal('Invalid Dates', 'The entry date cannot be after the exit date.');
-                return;
-            }
-
-            // Calculate the number of days, inclusive of both dates
-            const diffTime = Math.abs(exit - entry);
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-
-            const newTrip = {
-                entryDate: entryDate,
-                exitDate: exitDate,
-                days: diffDays,
-                person: selectedPerson,
-                createdAt: new Date()
-            };
-
-            // Add the new trip to Firestore
-            try {
-                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/trips`), newTrip);
-            } catch (error) {
-                showModal('Error', 'Failed to add trip. Please try again.');
-                console.error('Error adding document: ', error);
-            }
-
-            // Clear input fields
-            entryDateInput.value = '';
-            exitDateInput.value = '';
-        });
-
-        // Event listener for person selection change
-        personSelect.addEventListener('change', () => {
-            const selectedPerson = personSelect.value;
-            currentPersonSpan.textContent = selectedPerson;
-
-            // Re-subscribe to the Firestore listener with the new person filter
-            if (unsubscribe) {
-                unsubscribe(); // Unsubscribe from the old listener
-            }
-            if (userId) {
-                setupFirestoreListener(userId, selectedPerson);
-            }
-        });
-
+        
         // A function to set up the Firestore listener
-        function setupFirestoreListener(currentUserId, person) {
+        function setupFirestoreListener(currentUserId, person, dbInstance) {
             console.log(`Setting up Firestore listener for user: ${currentUserId} and person: ${person}`);
-            const tripsCollection = collection(db, `artifacts/${appId}/users/${currentUserId}/trips`);
+            const tripsCollection = collection(dbInstance, `artifacts/${appId}/users/${currentUserId}/trips`);
             const q = query(tripsCollection, where("person", "==", person));
 
             unsubscribe = onSnapshot(q, (querySnapshot) => {
@@ -283,26 +312,10 @@
                 showModal('Error', 'Failed to load trip data. Please check your connection.');
             });
         }
-
-        // Set up authentication and Firestore listener
-        onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                userId = user.uid;
-                currentUserIdSpan.textContent = userId;
-                console.log("Authentication successful. User ID:", userId);
-                setupFirestoreListener(userId, personSelect.value);
-
-            } else {
-                // If not logged in, try to sign in
-                console.log("No user found. Attempting to sign in...");
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                    console.log("Signed in with custom token.");
-                } else {
-                    await signInAnonymously(auth);
-                    console.log("Signed in anonymously.");
-                }
-            }
+        
+        // Close modal event listener
+        modalCloseBtn.addEventListener('click', () => {
+            modal.classList.add('hidden');
         });
     </script>
 </body>
