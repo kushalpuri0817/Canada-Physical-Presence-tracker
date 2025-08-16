@@ -127,6 +127,8 @@ function fetchTripsForPerson(person) {
 onAuthStateChanged(auth, async (user) => {
   if (user) {
     userId = user.uid;
+    // Update the User ID display
+    document.getElementById('currentUserId').textContent = userId;
     fetchTripsForPerson(personSelect.value);
   } else {
     await signInAnonymously(auth);
