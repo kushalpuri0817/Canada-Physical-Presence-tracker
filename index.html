@@ -93,141 +93,227 @@
             </div>
         </div>
     </div>
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js";
-import { getFirestore, collection, onSnapshot, addDoc, doc, deleteDoc, query, where, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
 
-// Fill these with your actual Firebase config values!
-const firebaseConfig = {
-  apiKey: "...",
-  authDomain: "...",
-  projectId: "...",
-  storageBucket: "canada-tracker.appspot.com",
-  messagingSenderId: "...",
-  appId: "...",
-  measurementId: "..."
-};
+    <script type="module">
+        // Import Firebase modules
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, addDoc, doc, deleteDoc, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
+        // Global variables provided by the Canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-let userId = null;
-let unsubscribe = null;
+        console.log("Firebase App ID:", appId);
+        console.log("Firebase Config:", firebaseConfig);
 
-const personSelect = document.getElementById('personSelect');
-const addTripBtn = document.getElementById('addTripBtn');
-const tripList = document.getElementById('tripList');
-const totalDaysElem = document.getElementById('totalDays');
-const currentPersonElem = document.getElementById('currentPerson');
-const noTripsMessage = document.getElementById('noTripsMessage');
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
 
-function showNoTrips(show) {
-    noTripsMessage.style.display = show ? 'block' : 'none';
-}
+        // UI elements
+        const entryDateInput = document.getElementById('entryDate');
+        const exitDateInput = document.getElementById('exitDate');
+        const addTripBtn = document.getElementById('addTripBtn');
+        const tripList = document.getElementById('tripList');
+        const totalDaysSpan = document.getElementById('totalDays');
+        const noTripsMessage = document.getElementById('noTripsMessage');
+        const personSelect = document.getElementById('personSelect');
+        const currentPersonSpan = document.getElementById('currentPerson');
+        const currentUserIdSpan = document.getElementById('currentUserId');
 
-function renderTrips(trips) {
-    tripList.innerHTML = '';
-    let totalDays = 0;
-    if (trips.length === 0) {
-        showNoTrips(true);
-    } else {
-        showNoTrips(false);
-        trips.forEach(trip => {
-            totalDays += trip.days;
-            const div = document.createElement('div');
-            div.className = "p-4 bg-gray-100 rounded-md flex justify-between items-center";
-            div.innerHTML = `
-                <div>
-                    <span class="font-bold">${trip.entryDate}</span> to 
-                    <span class="font-bold">${trip.exitDate}</span>
-                    <span class="ml-2 text-gray-500">(${trip.days} days)</span>
-                </div>
-                <button data-id="${trip.id}" class="delete-trip bg-red-500 text-white px-2 py-1 rounded hover:bg-red-700">Delete</button>
-            `;
-            tripList.appendChild(div);
+        // Modal elements
+        const modal = document.getElementById('modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalMessage = document.getElementById('modal-message');
+        const modalCloseBtn = document.getElementById('modal-close-btn');
+
+        let userId = null;
+        let unsubscribe = null; // Store the onSnapshot unsubscriber
+
+        // Helper function to show the custom modal
+        function showModal(title, message) {
+            modalTitle.textContent = title;
+            modalMessage.textContent = message;
+            modal.classList.remove('hidden');
+        }
+
+        // Close modal event listener
+        modalCloseBtn.addEventListener('click', () => {
+            modal.classList.add('hidden');
         });
-    }
-    totalDaysElem.textContent = totalDays;
-    addDeleteListeners();
-}
 
-function addDeleteListeners() {
-    const buttons = tripList.querySelectorAll('.delete-trip');
-    buttons.forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-            const tripId = btn.getAttribute('data-id');
-            if (userId && tripId) {
-                await deleteDoc(doc(db, `users/${userId}/trips`, tripId));
+        // Function to render trips from a given array
+        function renderTrips(trips) {
+            tripList.innerHTML = '';
+            if (trips.length === 0) {
+                noTripsMessage.classList.remove('hidden');
+            } else {
+                noTripsMessage.classList.add('hidden');
+                trips.forEach(trip => {
+                    const tripElement = document.createElement('div');
+                    tripElement.id = `trip-${trip.id}`;
+                    tripElement.className = 'flex items-center justify-between p-4 bg-gray-100 rounded-md';
+                    tripElement.innerHTML = `
+                        <div>
+                            <p class="font-medium text-gray-900">${trip.entryDate} to ${trip.exitDate}</p>
+                            <p class="text-sm text-gray-500">${trip.days} days</p>
+                        </div>
+                        <button class="remove-trip-btn bg-red-100 text-red-600 p-2 rounded-full hover:bg-red-200 transition duration-150 ease-in-out" data-id="${trip.id}">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                    `;
+                    tripList.appendChild(tripElement);
+                });
+
+                // Add event listeners for remove buttons
+                document.querySelectorAll('.remove-trip-btn').forEach(button => {
+                    button.addEventListener('click', async (e) => {
+                        const tripId = e.currentTarget.dataset.id;
+                        if (userId && tripId) {
+                            // Delete the document from Firestore
+                            try {
+                                await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/trips`, tripId));
+                            } catch (error) {
+                                showModal('Error', 'Failed to delete trip. Please try again.');
+                                console.error('Error removing document: ', error);
+                            }
+                        }
+                    });
+                });
+            }
+            updateTotal(trips);
+        }
+
+        // Function to update the total days
+        function updateTotal(trips) {
+            const totalDays = trips.reduce((sum, trip) => sum + trip.days, 0);
+            totalDaysSpan.textContent = totalDays;
+        }
+
+        // Event listener for the "Add Trip" button
+        addTripBtn.addEventListener('click', async () => {
+            if (!userId) {
+                showModal('Not Authenticated', 'Please wait for authentication to complete.');
+                return;
+            }
+
+            const entryDate = entryDateInput.value;
+            const exitDate = exitDateInput.value;
+            const selectedPerson = personSelect.value;
+
+            if (!entryDate || !exitDate) {
+                showModal('Missing Dates', 'Please enter both an entry and an exit date.');
+                return;
+            }
+
+            // Convert to Date objects for comparison
+            const entry = new Date(entryDate);
+            const exit = new Date(exitDate);
+
+            if (entry > exit) {
+                showModal('Invalid Dates', 'The entry date cannot be after the exit date.');
+                return;
+            }
+
+            // Calculate the number of days, inclusive of both dates
+            const diffTime = Math.abs(exit - entry);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
+            const newTrip = {
+                entryDate: entryDate,
+                exitDate: exitDate,
+                days: diffDays,
+                person: selectedPerson,
+                createdAt: new Date()
+            };
+
+            // Add the new trip to Firestore
+            try {
+                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/trips`), newTrip);
+            } catch (error) {
+                showModal('Error', 'Failed to add trip. Please try again.');
+                console.error('Error adding document: ', error);
+            }
+
+            // Clear input fields
+            entryDateInput.value = '';
+            exitDateInput.value = '';
+        });
+
+        // Event listener for person selection change
+        personSelect.addEventListener('change', () => {
+            const selectedPerson = personSelect.value;
+            currentPersonSpan.textContent = selectedPerson;
+
+            // Re-subscribe to the Firestore listener with the new person filter
+            if (unsubscribe) {
+                unsubscribe(); // Unsubscribe from the old listener
+            }
+            if (userId) {
+                setupFirestoreListener(userId, selectedPerson);
             }
         });
-    });
-}
 
-function fetchTripsForPerson(person) {
-    currentPersonElem.textContent = person;
-    if (unsubscribe) unsubscribe();
-    const tripsCollection = collection(db, `users/${userId}/trips`);
-    const q = query(tripsCollection, where("person", "==", person));
-    unsubscribe = onSnapshot(q, (querySnapshot) => {
-        const trips = [];
-        querySnapshot.forEach(docSnap => {
-            trips.push({
-                ...docSnap.data(),
-                id: docSnap.id
+        // A function to set up the Firestore listener
+        function setupFirestoreListener(currentUserId, person) {
+            console.log(`Setting up Firestore listener for user: ${currentUserId} and person: ${person}`);
+            const tripsCollection = collection(db, `artifacts/${appId}/users/${currentUserId}/trips`);
+            const q = query(tripsCollection, where("person", "==", person));
+
+            unsubscribe = onSnapshot(q, (querySnapshot) => {
+                const trips = [];
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    trips.push({
+                        id: doc.id,
+                        entryDate: data.entryDate,
+                        exitDate: data.exitDate,
+                        days: data.days,
+                        person: data.person
+                    });
+                });
+                renderTrips(trips);
+            }, (error) => {
+                console.error("Error fetching documents: ", error);
+                showModal('Error', 'Failed to load trip data. Please check your connection.');
             });
+        }
+
+        // Set up authentication and Firestore listener
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                userId = user.uid;
+                currentUserIdSpan.textContent = userId;
+                console.log("Authentication successful. User ID:", userId);
+                setupFirestoreListener(userId, personSelect.value);
+
+            } else {
+                // If not logged in, try to sign in
+                console.log("No user found. Attempting to sign in...");
+                if (initialAuthToken) {
+                    try {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                        console.log("Signed in with custom token.");
+                    } catch (error) {
+                        console.error('Custom token sign-in failed: ', error);
+                        showModal('Authentication Error', 'Failed to sign in with custom token.');
+                    }
+                } else {
+                    try {
+                        await signInAnonymously(auth);
+                        console.log("Signed in anonymously.");
+                    } catch (error) {
+                        console.error('Anonymous sign-in failed: ', error);
+                        showModal('Authentication Error', 'Failed to sign in anonymously.');
+                    }
+                }
+            }
         });
-        renderTrips(trips);
-    });
-}
-
-onAuthStateChanged(auth, async (user) => {
-    if (user) {
-        userId = user.uid;
-        document.getElementById('currentUserId').textContent = userId;
-        fetchTripsForPerson(personSelect.value);
-    } else {
-        await signInAnonymously(auth);
-    }
-});
-
-personSelect.addEventListener('change', () => {
-    fetchTripsForPerson(personSelect.value);
-});
-
-addTripBtn.addEventListener('click', async () => {
-    const entryDate = document.getElementById('entryDate').value;
-    const exitDate = document.getElementById('exitDate').value;
-    const selectedPerson = personSelect.value;
-
-    if (!entryDate || !exitDate) {
-        showModal('Invalid Dates', 'Please select both entry and exit dates.');
-        return;
-    }
-    const diffDays = Math.floor((new Date(exitDate) - new Date(entryDate)) / (1000 * 60 * 60 * 24)) + 1;
-    if (diffDays < 1) {
-        showModal('Invalid Trip', 'Exit date must be after or equal to entry date.');
-        return;
-    }
-    await addDoc(collection(db, `users/${userId}/trips`), {
-        entryDate, exitDate, days: diffDays, person: selectedPerson, createdAt: serverTimestamp()
-    });
-    // Optionally clear fields
-    document.getElementById('entryDate').value = '';
-    document.getElementById('exitDate').value = '';
-});
-
-// Modal helpers
-function showModal(title, message) {
-    document.getElementById('modal-title').textContent = title;
-    document.getElementById('modal-message').textContent = message;
-    document.getElementById('modal').style.display = 'block';
-}
-document.getElementById('modal-close-btn').addEventListener('click', () => {
-    document.getElementById('modal').style.display = 'none';
-});
-
-</script>
+    </script>
 </body>
 </html>
